@@ -1,9 +1,9 @@
-use std::ops::Div;
-use std::time::Duration;
-
 const RAM_SIZE: usize = 4096;
-const DISPLAY_SIZE: usize = 64 * 32;
+
+pub const DISPLAY_WIDTH: usize = 64;
+pub const DISPLAY_HEIGHT: usize = 32;
 const VARIABLE_REGISTER_SIZE: usize = 16;
+const FLAG_REGISTER: usize = 15;
 const FONT: [u8; 80] = [
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
     0x20, 0x60, 0x20, 0x20, 0x70, // 1
@@ -28,8 +28,8 @@ struct Memory {
 }
 
 impl Memory {
-    fn get_instruction(&self, pos: u8) -> Result<u16, String> {
-        let mut data = match self.inner.get(pos as usize) {
+    fn get_instruction(&self, pos: usize) -> Result<u16, String> {
+        let mut data = match self.inner.get(pos) {
             Some(d) => *d as u16,
             None => {
                 return Err(format!("index {pos} is out of bounds, memory size is {}", self.inner.len()));
@@ -38,7 +38,7 @@ impl Memory {
         let mut instruction: u16 = data << 4;
 
         let pos = pos + 1;
-        data = match self.inner.get(pos as usize) {
+        data = match self.inner.get(pos) {
             Some(d) => *d as u16,
             None => {
                 return Err(format!("index {pos} is out of bounds, memory size is {}", self.inner.len()));
@@ -62,21 +62,22 @@ impl Memory {
 }
 
 struct Display {
-    inner: [bool; DISPLAY_SIZE],
+    inner: [bool; DISPLAY_WIDTH * DISPLAY_HEIGHT],
 }
 
 impl Display {
-    fn draw(&mut self, x: usize, y: usize, flip: bool) -> Result<(), String> {
+    fn draw(&mut self, x: usize, y: usize, flip: bool) -> Result<bool, String> {
         let pos = x * y;
-        if pos > DISPLAY_SIZE {
-            return Err(format!("{x}:{y} is out of bounds for the display of size {DISPLAY_SIZE}"));
+        if pos > DISPLAY_WIDTH * DISPLAY_HEIGHT {
+            return Err(format!("{x}:{y} is out of bounds for the display of size {}", DISPLAY_WIDTH * DISPLAY_HEIGHT));
         }
+        let old = self.inner[pos];
         self.inner[pos] = self.inner[pos] != flip;
-        Ok(())
+        Ok(old == true && self.inner[pos] == false)
     }
 
     fn clear(&mut self) {
-        self.inner = [false; DISPLAY_SIZE]
+        self.inner = [false; DISPLAY_WIDTH * DISPLAY_HEIGHT]
     }
 }
 
@@ -88,11 +89,20 @@ struct Timer {
     inner: u8,
 }
 
-struct Input {}
+#[derive(Default)]
+struct InputBuffer {
+    inner: Vec<char>,
+}
+
+pub trait Screen {
+    fn draw(&mut self, x: usize, y: usize, draw: bool);
+    fn clear(&mut self);
+}
 
 pub struct Chip8 {
     memory: Memory,
     display: Display,
+    input: InputBuffer,
     program_counter: u16,
     index_register: u16,
     stack: Stack,
@@ -106,7 +116,8 @@ impl Chip8 {
     pub fn new(ticks: u64) -> Result<Self, String> {
         let mut chip = Self {
             memory: Memory { inner: [0u8; RAM_SIZE] },
-            display: Display { inner: [false; DISPLAY_SIZE] },
+            display: Display { inner: [false; DISPLAY_WIDTH * DISPLAY_HEIGHT] },
+            input: InputBuffer::default(),
             program_counter: 0,
             index_register: 0,
             stack: Stack { inner: Vec::new() },
@@ -133,7 +144,7 @@ impl Chip8 {
 
 
     fn fetch(&mut self) -> Result<u16, String> {
-        let instruction = self.memory.get_instruction(self.program_counter as u8)?;
+        let instruction = self.memory.get_instruction(self.program_counter as usize)?;
         self.program_counter += 2;
         Ok(instruction)
     }
@@ -143,6 +154,8 @@ impl Chip8 {
         let second = 0b1111 & (instruction >> 8) as u8;
         let third = 0b1111 & (instruction >> 4) as u8;
         let fourth = 0b1111 & instruction as u8;
+        let number = 0b1111_1111 & instruction as u8;
+        let address = 0b1111_1111_1111 & instruction;
         match first {
             0x0 => {
                 if second == 0x0 && third == 0xE && fourth == 0x0 {
@@ -150,22 +163,22 @@ impl Chip8 {
                 }
             }
             0x1 => {
-                return Ok(Instruction::Jump((second, third, fourth)));
+                return Ok(Instruction::Jump(address));
             }
             0x6 => {
                 if second > 0xF {
                     return Err(format!("instruction contains invalid register {second}"));
                 }
-                return Ok(Instruction::SetRegister { register: second, value: (third, fourth) });
+                return Ok(Instruction::SetRegister { register: second as usize, value: number });
             }
             0x7 => {
-                return Ok(Instruction::AddRegister { register: second, value: (third, fourth) });
+                return Ok(Instruction::AddRegister { register: second as usize, value: number });
             }
             0xA => {
-                return Ok(Instruction::SetIndex((second, third, fourth)));
+                return Ok(Instruction::SetIndex(address));
             }
             0xD => {
-                return Ok(Instruction::Draw { x: second, y: third, sprite: fourth });
+                return Ok(Instruction::Draw { x_register: second as usize, y_register: third as usize, count: fourth });
             }
             _ => {}
         }
@@ -175,31 +188,84 @@ impl Chip8 {
     fn execute(&mut self, instruction: Instruction) -> Result<(), String> {
         match instruction {
             Instruction::ClearScreen => { self.display.clear() }
-            Instruction::Jump(_) => {}
-            Instruction::SetRegister { register, value } => {}
-            Instruction::AddRegister { .. } => {}
-            Instruction::SetIndex(_) => {}
-            Instruction::Draw { .. } => {}
+            Instruction::Jump(address) => {
+                self.program_counter = address;
+            }
+            Instruction::SetRegister { register, value } => { self.variable_registers[register] = value }
+            Instruction::AddRegister { register, value } => { self.variable_registers[register] += value }
+            Instruction::SetIndex(address) => { self.index_register = address }
+            Instruction::Draw { x_register, y_register, count } => {
+                let mut x = (self.variable_registers[x_register] & ((DISPLAY_WIDTH - 1) as u8)) as usize;
+                let mut y = (self.variable_registers[y_register] & ((DISPLAY_HEIGHT - 1) as u8)) as usize;
+                self.variable_registers[FLAG_REGISTER] = 0;
+
+                let begin = self.index_register as usize;
+                let end = (self.index_register + count as u16) as usize;
+                for i in begin..end {
+                    let sprite_row = self.memory.inner[i];
+                    let bits = get_bits(sprite_row);
+
+                    for bit in bits {
+                        let turned_off = self.display.draw(x, y, bit)?;
+                        if turned_off {
+                            self.variable_registers[FLAG_REGISTER] = 1;
+                        }
+                        x += 1;
+
+                        if x == DISPLAY_WIDTH {
+                            break;
+                        }
+                    }
+
+                    y += 1;
+
+                    if x == DISPLAY_WIDTH && y == DISPLAY_HEIGHT {
+                        break;
+                    }
+                }
+            }
         }
         Ok(())
     }
 }
 
+fn get_bits(byte: u8) -> [bool; 8] {
+    let mut bits = [false; 8];
+    for i in 0..8 {
+        let bit = byte >> i & 1;
+        bits[i] = bit == 1;
+    }
+
+    bits
+}
+
+fn nth_nibble(instruction: u16, nth: u8) -> Result<u8, String> {
+    match nth {
+        1 => Ok(0b1111 & (instruction >> 12) as u8),
+        2 => Ok(0b1111 & (instruction >> 8) as u8),
+        3 => Ok(0b1111 & (instruction >> 4) as u8),
+        4 => Ok(0b1111 & instruction as u8),
+        _ => {
+            return Err(format!("valid range for nibbles are 1-4 but got {nth}"));
+        }
+    }
+}
+
 enum Instruction {
     ClearScreen,
-    Jump((u8, u8, u8)),
+    Jump(u16),
     SetRegister {
-        register: u8,
-        value: (u8, u8),
+        register: usize,
+        value: u8,
     },
     AddRegister {
-        register: u8,
-        value: (u8, u8),
+        register: usize,
+        value: u8,
     },
-    SetIndex((u8, u8, u8)),
+    SetIndex(u16),
     Draw {
-        x: u8,
-        y: u8,
-        sprite: u8,
+        x_register: usize,
+        y_register: usize,
+        count: u8,
     },
 }
