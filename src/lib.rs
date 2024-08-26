@@ -133,6 +133,14 @@ impl Chip8 {
         }
     }
 
+    pub fn screen(&self) -> &[bool] {
+        self.display.inner.as_slice()
+    }
+
+    pub fn on_input(&mut self, input: char) {
+        self.input.inner.push(input)
+    }
+
     pub fn load_program(&mut self, data: &[u8]) -> Result<(), String> {
         if let Err(err) = self.memory.load(0x200, data) {
             return Err(format!("could not load program: {err}"));
@@ -142,6 +150,14 @@ impl Chip8 {
         Ok(())
     }
 
+    pub fn update(&mut self) -> Result<(), String> {
+        for _ in 0..self.ticks {
+            let encoded_instruction = self.fetch()?;
+            let instruction = Self::decode(encoded_instruction)?;
+            self.execute(instruction)?;
+        }
+        Ok(())
+    }
 
     fn fetch(&mut self) -> Result<u16, String> {
         let instruction = self.memory.get_instruction(self.program_counter as usize)?;
