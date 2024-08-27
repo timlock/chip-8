@@ -1,4 +1,4 @@
-use std::fmt::{Formatter, write};
+use std::fmt::Formatter;
 
 const RAM_SIZE: usize = 4096;
 
@@ -93,7 +93,7 @@ struct Timer {
 
 #[derive(Default)]
 struct InputBuffer {
-    inner: Vec<char>,
+    inner: Vec<(char, bool)>,
 }
 
 pub trait Screen {
@@ -111,11 +111,12 @@ pub struct Chip8 {
     delay_timer: Timer,
     sound_timer: Timer,
     variable_registers: [u8; VARIABLE_REGISTER_SIZE],
-    ticks: u64,
+    ticks: usize,
+    debug: bool,
 }
 
 impl Chip8 {
-    pub fn new(ticks: u64) -> Result<Self, String> {
+    pub fn new(ticks: usize, debug: bool) -> Result<Self, String> {
         let mut chip = Self {
             memory: Memory { inner: [0u8; RAM_SIZE] },
             display: Display { inner: [false; DISPLAY_WIDTH * DISPLAY_HEIGHT] },
@@ -127,6 +128,7 @@ impl Chip8 {
             sound_timer: Timer { inner: 0 },
             variable_registers: [0u8; VARIABLE_REGISTER_SIZE],
             ticks,
+            debug,
         };
 
         match chip.memory.load(0x050, &FONT) {
@@ -139,8 +141,8 @@ impl Chip8 {
         self.display.inner.as_slice()
     }
 
-    pub fn on_input(&mut self, input: char) {
-        self.input.inner.push(input)
+    pub fn on_input(&mut self, input: char, down: bool) {
+        self.input.inner.push((input, down))
     }
 
     pub fn load_program(&mut self, data: &[u8]) -> Result<(), String> {
@@ -154,12 +156,15 @@ impl Chip8 {
 
     pub fn update(&mut self) -> Result<(), String> {
         for _ in 0..self.ticks {
-            println!("State:   PC: {} I: {} registers: {:?}", self.program_counter, self.index_register, self.variable_registers);
+            if self.debug {
+                println!("State:   PC: {} I: {} registers: {:?}", self.program_counter, self.index_register, self.variable_registers);
+            }
 
             let encoded_instruction = self.fetch()?;
             let instruction = Instruction::try_from(encoded_instruction)?;
-
-            println!("{:#06x}   -   {}", encoded_instruction, instruction);
+            if self.debug {
+                println!("{:#06x}   -   {}", encoded_instruction, instruction);
+            }
             self.execute(instruction)?;
         }
         Ok(())
@@ -182,9 +187,7 @@ impl Chip8 {
             Instruction::SetIndex(address) => { self.index_register = address }
             Instruction::Draw { x_register, y_register, count } => {
                 let start_x = (self.variable_registers[x_register] & ((DISPLAY_WIDTH - 1) as u8)) as usize;
-                let end_x = start_x + 8;
                 let start_y = (self.variable_registers[y_register] & ((DISPLAY_HEIGHT - 1) as u8)) as usize;
-                let end_y = start_y + count as usize;
                 self.variable_registers[FLAG_REGISTER] = 0;
 
                 let begin = self.index_register as usize;
@@ -193,22 +196,22 @@ impl Chip8 {
                 for i in begin..end {
                     let sprite_row = self.memory.inner[i];
                     let bits = get_bits(sprite_row);
-            
+
                     let mut x = start_x;
                     for bit in bits {
                         let turned_off = self.display.draw(x, y, bit)?;
                         if turned_off {
                             self.variable_registers[FLAG_REGISTER] = 1;
                         }
-            
+
                         x += 1;
-                        if x >= DISPLAY_WIDTH -1 {
+                        if x >= DISPLAY_WIDTH - 1 {
                             break;
                         }
                     }
-            
+
                     y += 1;
-                    if x >= DISPLAY_WIDTH-1 && y >= DISPLAY_HEIGHT - 1 {
+                    if x >= DISPLAY_WIDTH - 1 && y >= DISPLAY_HEIGHT - 1 {
                         break;
                     }
                 }
@@ -222,7 +225,7 @@ fn get_bits(byte: u8) -> [bool; 8] {
     let mut bits = [false; 8];
     for i in 0..8 {
         let bit = byte >> i & 1;
-        bits[7- i] = bit == 1;
+        bits[7 - i] = bit == 1;
     }
 
     bits

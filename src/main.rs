@@ -1,4 +1,5 @@
 use std::fs;
+
 use sdl2::event::Event;
 use sdl2::keyboard::Scancode;
 use sdl2::pixels::Color;
@@ -6,9 +7,12 @@ use sdl2::rect::Rect;
 
 use chip8_emulator::{Chip8, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 
-const WIDTH: u32 = DISPLAY_WIDTH as u32 * 10;
-const HEIGHT: u32 = DISPLAY_HEIGHT as u32 * 10;
+const SCALE: u32 = 10;
+const WIDTH: u32 = DISPLAY_WIDTH as u32 * SCALE;
+const HEIGHT: u32 = DISPLAY_HEIGHT as u32 * SCALE;
+const TICKS: usize = 10;
 
+const DEBUG: bool = false;
 
 fn main() -> Result<(), String> {
     let sdl_context = sdl2::init()?;
@@ -28,7 +32,7 @@ fn main() -> Result<(), String> {
     canvas.clear();
     canvas.present();
 
-    let mut emulator = Chip8::new(50)?;
+    let mut emulator = Chip8::new(TICKS, DEBUG)?;
     let rom = fs::read("roms/IBM Logo.ch8").map_err(|err| err.to_string())?;
 
     emulator.load_program(&rom)?;
@@ -45,37 +49,24 @@ fn main() -> Result<(), String> {
                     ..
                 } => {
                     println!("Key down {:?}", event);
-
-                    let key = match scancode.unwrap() {
-                        Scancode::A => 'a',
-                        Scancode::C => 'c',
-                        Scancode::D => 'd',
-                        Scancode::E => 'e',
-                        Scancode::F => 'f',
-                        Scancode::Q => 'q',
-                        Scancode::R => 'r',
-                        Scancode::S => 's',
-                        Scancode::W => 'w',
-                        Scancode::X => 'x',
-                        Scancode::Y => 'y',
-                        Scancode::Z => 'z',
-                        Scancode::Num1 => '1',
-                        Scancode::Num2 => '2',
-                        Scancode::Num3 => '3',
-                        Scancode::Num4 => '4',
-                        Scancode::Escape => {
-                            break 'game;
-                        }
-                        _ => { ' ' }
-                    };
-
-                    emulator.on_input(key)
+                    if let Scancode::Escape = scancode.unwrap() {
+                        break 'game;
+                    }
+                    if let Ok(key) = scancode_to_char(scancode.unwrap()) {
+                        emulator.on_input(key, true);
+                    }
                 }
                 Event::KeyUp {
                     scancode,
                     ..
                 } => {
                     println!("Key up {:?}", event);
+                    if let Scancode::Escape = scancode.unwrap() {
+                        break 'game;
+                    }
+                    if let Ok(key) = scancode_to_char(scancode.unwrap()) {
+                        emulator.on_input(key, false);
+                    }
                 }
                 _ => {}
             }
@@ -93,8 +84,8 @@ fn main() -> Result<(), String> {
 
                 let y = (i / DISPLAY_WIDTH) as i32;
                 let x = (i % DISPLAY_WIDTH) as i32;
-                let rect = Rect::new(x * 10, y * 10, 10, 10);
-                if pixel {
+                let rect = Rect::new(x * SCALE as i32, y * SCALE as i32, SCALE, SCALE);
+                if pixel && DEBUG{
                     println!("Box x:{x} y:{y}");
                 }
                 canvas.fill_rect(rect)?;
@@ -106,83 +97,25 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-
-// use sdl2::event::Event;
-// use sdl2::keyboard::Keycode;
-// use sdl2::pixels::Color;
-// use sdl2::rect::Rect;
-// use sdl2::render::Canvas;
-// use sdl2::video::Window;
-//
-// const SCALE: u32 = 15;
-// const WINDOW_WIDTH: u32 = (600 as u32) * SCALE;
-// const WINDOW_HEIGHT: u32 = (800 as u32) * SCALE;
-// const TICKS_PER_FRAME: usize = 10;
-//
-// fn main() {
-//     // Setup SDL
-//     let sdl_context = sdl2::init().unwrap();
-//     let video_subsystem = sdl_context.video().unwrap();
-//     let window = video_subsystem
-//         .window("Chip-8 Emulator", WINDOW_WIDTH, WINDOW_HEIGHT)
-//         .position_centered()
-//         .opengl()
-//         .build()
-//         .unwrap();
-//
-//     let mut canvas = window.into_canvas().present_vsync().build().unwrap();
-//     canvas.clear();
-//     canvas.present();
-//
-//     let mut event_pump = sdl_context.event_pump().unwrap();
-//
-
-//     'gameloop: loop {
-//         for evt in event_pump.poll_iter() {
-//             match evt {
-//                 Event::Quit { .. } | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
-//                     break 'gameloop;
-//                 }
-//                 Event::KeyDown { keycode: Some(key), .. } => {
-//                     // if let Some(k) = key2btn(key) {
-//                     //     chip8.keypress(k, true);
-//                     // }
-//                 }
-//                 Event::KeyUp { keycode: Some(key), .. } => {
-//                     // if let Some(k) = key2btn(key) {
-//                     //     chip8.keypress(k, false);
-//                     // }
-//                 }
-//                 _ => ()
-//             }
-//         }
-//
-//         // for _ in 0..TICKS_PER_FRAME {
-//         //     chip8.tick();
-//         // }
-//         // chip8.tick_timers();
-//         draw_screen(&mut canvas);
-//     }
-// }
-//
-// fn draw_screen(canvas: &mut Canvas<Window>) {
-//     // Clear canvas as black
-//     canvas.set_draw_color(Color::RGB(0, 0, 0));
-//     canvas.clear();
-//
-//     let screen_buf: [bool; 600 * 800] = [true; 600 * 800];
-//     // Now set draw color to white, iterate through each point and see if it should be drawn
-//     canvas.set_draw_color(Color::RGB(255, 255, 255));
-//     for (i, pixel) in screen_buf.iter().enumerate() {
-//         if *pixel {
-//             // Convert our 1D array's index into a 2D (x,y) position
-//             let x = (i % 600) as u32;
-//             let y = (i / 800) as u32;
-//
-//             // Draw a rectangle at (x,y), scaled up by our SCALE value
-//             let rect = Rect::new((x * SCALE) as i32, (y * SCALE) as i32, SCALE, SCALE);
-//             canvas.fill_rect(rect).unwrap();
-//         }
-//     }
-//     canvas.present();
-// }
+fn scancode_to_char(scancode: Scancode) -> Result<char, String> {
+    let key = match scancode {
+        Scancode::A => 'a',
+        Scancode::C => 'c',
+        Scancode::D => 'd',
+        Scancode::E => 'e',
+        Scancode::F => 'f',
+        Scancode::Q => 'q',
+        Scancode::R => 'r',
+        Scancode::S => 's',
+        Scancode::W => 'w',
+        Scancode::X => 'x',
+        Scancode::Y => 'y',
+        Scancode::Z => 'z',
+        Scancode::Num1 => '1',
+        Scancode::Num2 => '2',
+        Scancode::Num3 => '3',
+        Scancode::Num4 => '4',
+        _ => return Err(format!("invalid key input: {}", scancode.name()))
+    };
+    Ok(key)
+}

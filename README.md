@@ -2,6 +2,7 @@
 
 CHIP-8 Emulator created with Rust and SDL2
 
-***Resources:***
+***Reference:***
 - https://tobiasvl.github.io/blog/write-a-chip-8-emulator/
 - https://sunjay.dev/learn-game-dev/intro.html
+- https://github.com/aquova/chip8-book
