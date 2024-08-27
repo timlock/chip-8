@@ -1,4 +1,4 @@
-use std::fmt::Formatter;
+use std::fmt::{Formatter, write};
 
 const RAM_SIZE: usize = 4096;
 
@@ -182,6 +182,34 @@ impl Chip8 {
             Instruction::Jump(address) => {
                 self.program_counter = address;
             }
+            Instruction::Call(address) => {
+                self.stack.inner.push(self.program_counter);
+                self.program_counter = address;
+            }
+            Instruction::Return => {
+                let address = self.stack.inner.pop().ok_or("stack is empty")?;
+                self.program_counter = address;
+            }
+            Instruction::SkipEqVal { register, value } => {
+                if self.variable_registers[register] == value {
+                    self.program_counter += 2;
+                }
+            }
+            Instruction::SkipNeVal { register, value } => {
+                if self.variable_registers[register] != value {
+                    self.program_counter += 2;
+                }
+            }
+            Instruction::SkipEqReg { x_register, y_register } => {
+                if self.variable_registers[x_register] == self.variable_registers[y_register] {
+                    self.program_counter += 2;
+                }
+            }
+            Instruction::SkipNeReg { x_register, y_register } => {
+                if self.variable_registers[x_register] != self.variable_registers[y_register] {
+                    self.program_counter += 2;
+                }
+            }
             Instruction::SetRegister { register, value } => { self.variable_registers[register] = value }
             Instruction::AddRegister { register, value } => { self.variable_registers[register] += value }
             Instruction::SetIndex(address) => { self.index_register = address }
@@ -246,6 +274,24 @@ fn nth_nibble(instruction: u16, nth: u8) -> Result<u8, String> {
 enum Instruction {
     ClearScreen,
     Jump(u16),
+    Call(u16),
+    Return,
+    SkipEqVal {
+        register: usize,
+        value: u8,
+    },
+    SkipNeVal {
+        register: usize,
+        value: u8,
+    },
+    SkipEqReg {
+        x_register: usize,
+        y_register: usize,
+    },
+    SkipNeReg {
+        x_register: usize,
+        y_register: usize,
+    },
     SetRegister {
         register: usize,
         value: u8,
@@ -275,12 +321,22 @@ impl TryFrom<u16> for Instruction {
         let address = 0b1111_1111_1111 & instruction;
         match first {
             0x0 => {
-                if second == 0x0 && third == 0xE && fourth == 0x0 {
-                    return Ok(Instruction::ClearScreen);
+                if second == 0x0 {
+                    if third == 0xE {
+                        if fourth == 0x0 {
+                            return Ok(Instruction::ClearScreen);
+                        }
+                        if fourth == 0xE {
+                            return Ok(Instruction::Return);
+                        }
+                    }
                 }
             }
             0x1 => {
                 return Ok(Instruction::Jump(address));
+            }
+            0x2 => {
+                return Ok(Instruction::Call(address));
             }
             0x6 => {
                 if second > 0xF {
@@ -308,6 +364,12 @@ impl std::fmt::Display for Instruction {
         match self {
             Instruction::ClearScreen => write!(f, "clear screen"),
             Instruction::Jump(address) => write!(f, "jump {address}"),
+            Instruction::Call(address) => write!(f, "call {address}"),
+            Instruction::Return => write!(f, "return"),
+            Instruction::SkipEqVal { register, value } => write!(f, "skip if value equals register {register} {value}"),
+            Instruction::SkipNeVal { register, value } => write!(f, "skip if value does not equals register {register} {value}"),
+            Instruction::SkipEqReg { x_register, y_register } => write!(f, "skip if registers are equal {x_register} {y_register}"),
+            Instruction::SkipNeReg { x_register, y_register } => write!(f, "skip if registers are not equal {x_register} {y_register}"),
             Instruction::SetRegister { register, value } => write!(f, "set register {register} {value}"),
             Instruction::AddRegister { register, value } => write!(f, "add register {register} {value}"),
             Instruction::SetIndex(address) => write!(f, "set index {address}"),
