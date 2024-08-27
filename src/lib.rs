@@ -1,3 +1,5 @@
+use std::fmt::{Formatter, write};
+
 const RAM_SIZE: usize = 4096;
 
 pub const DISPLAY_WIDTH: usize = 64;
@@ -35,7 +37,7 @@ impl Memory {
                 return Err(format!("index {pos} is out of bounds, memory size is {}", self.inner.len()));
             }
         };
-        let mut instruction: u16 = data << 4;
+        let mut instruction: u16 = data << 8;
 
         let pos = pos + 1;
         data = match self.inner.get(pos) {
@@ -67,7 +69,7 @@ struct Display {
 
 impl Display {
     fn draw(&mut self, x: usize, y: usize, flip: bool) -> Result<bool, String> {
-        let pos = x * y;
+        let pos = x + y * DISPLAY_WIDTH;
         if pos > DISPLAY_WIDTH * DISPLAY_HEIGHT {
             return Err(format!("{x}:{y} is out of bounds for the display of size {}", DISPLAY_WIDTH * DISPLAY_HEIGHT));
         }
@@ -152,8 +154,12 @@ impl Chip8 {
 
     pub fn update(&mut self) -> Result<(), String> {
         for _ in 0..self.ticks {
+            println!("State:   PC: {} I: {} registers: {:?}", self.program_counter, self.index_register, self.variable_registers);
+
             let encoded_instruction = self.fetch()?;
-            let instruction = Self::decode(encoded_instruction)?;
+            let instruction = Instruction::try_from(encoded_instruction)?;
+
+            println!("{:#06x}   -   {}", encoded_instruction, instruction);
             self.execute(instruction)?;
         }
         Ok(())
@@ -163,42 +169,6 @@ impl Chip8 {
         let instruction = self.memory.get_instruction(self.program_counter as usize)?;
         self.program_counter += 2;
         Ok(instruction)
-    }
-
-    fn decode(instruction: u16) -> Result<Instruction, String> {
-        let first = 0b1111 & (instruction >> 12) as u8;
-        let second = 0b1111 & (instruction >> 8) as u8;
-        let third = 0b1111 & (instruction >> 4) as u8;
-        let fourth = 0b1111 & instruction as u8;
-        let number = 0b1111_1111 & instruction as u8;
-        let address = 0b1111_1111_1111 & instruction;
-        match first {
-            0x0 => {
-                if second == 0x0 && third == 0xE && fourth == 0x0 {
-                    return Ok(Instruction::ClearScreen);
-                }
-            }
-            0x1 => {
-                return Ok(Instruction::Jump(address));
-            }
-            0x6 => {
-                if second > 0xF {
-                    return Err(format!("instruction contains invalid register {second}"));
-                }
-                return Ok(Instruction::SetRegister { register: second as usize, value: number });
-            }
-            0x7 => {
-                return Ok(Instruction::AddRegister { register: second as usize, value: number });
-            }
-            0xA => {
-                return Ok(Instruction::SetIndex(address));
-            }
-            0xD => {
-                return Ok(Instruction::Draw { x_register: second as usize, y_register: third as usize, count: fourth });
-            }
-            _ => {}
-        }
-        return Err(format!("unknown instruction: {first}{second}{third}{fourth}"));
     }
 
     fn execute(&mut self, instruction: Instruction) -> Result<(), String> {
@@ -211,31 +181,34 @@ impl Chip8 {
             Instruction::AddRegister { register, value } => { self.variable_registers[register] += value }
             Instruction::SetIndex(address) => { self.index_register = address }
             Instruction::Draw { x_register, y_register, count } => {
-                let mut x = (self.variable_registers[x_register] & ((DISPLAY_WIDTH - 1) as u8)) as usize;
-                let mut y = (self.variable_registers[y_register] & ((DISPLAY_HEIGHT - 1) as u8)) as usize;
+                let start_x = (self.variable_registers[x_register] & ((DISPLAY_WIDTH - 1) as u8)) as usize;
+                let end_x = start_x + 8;
+                let start_y = (self.variable_registers[y_register] & ((DISPLAY_HEIGHT - 1) as u8)) as usize;
+                let end_y = start_y + count as usize;
                 self.variable_registers[FLAG_REGISTER] = 0;
 
                 let begin = self.index_register as usize;
                 let end = (self.index_register + count as u16) as usize;
+                let mut y = start_y;
                 for i in begin..end {
                     let sprite_row = self.memory.inner[i];
                     let bits = get_bits(sprite_row);
-
+            
+                    let mut x = start_x;
                     for bit in bits {
                         let turned_off = self.display.draw(x, y, bit)?;
                         if turned_off {
                             self.variable_registers[FLAG_REGISTER] = 1;
                         }
+            
                         x += 1;
-
-                        if x == DISPLAY_WIDTH {
+                        if x >= DISPLAY_WIDTH -1 {
                             break;
                         }
                     }
-
+            
                     y += 1;
-
-                    if x == DISPLAY_WIDTH && y == DISPLAY_HEIGHT {
+                    if x >= DISPLAY_WIDTH-1 && y >= DISPLAY_HEIGHT - 1 {
                         break;
                     }
                 }
@@ -249,7 +222,7 @@ fn get_bits(byte: u8) -> [bool; 8] {
     let mut bits = [false; 8];
     for i in 0..8 {
         let bit = byte >> i & 1;
-        bits[i] = bit == 1;
+        bits[7- i] = bit == 1;
     }
 
     bits
@@ -284,4 +257,58 @@ enum Instruction {
         y_register: usize,
         count: u8,
     },
+}
+
+
+impl TryFrom<u16> for Instruction {
+    type Error = String;
+
+    fn try_from(instruction: u16) -> Result<Self, Self::Error> {
+        let first = 0b1111 & (instruction >> 12) as u8;
+        let second = 0b1111 & (instruction >> 8) as u8;
+        let third = 0b1111 & (instruction >> 4) as u8;
+        let fourth = 0b1111 & instruction as u8;
+        let number = 0b1111_1111 & instruction as u8;
+        let address = 0b1111_1111_1111 & instruction;
+        match first {
+            0x0 => {
+                if second == 0x0 && third == 0xE && fourth == 0x0 {
+                    return Ok(Instruction::ClearScreen);
+                }
+            }
+            0x1 => {
+                return Ok(Instruction::Jump(address));
+            }
+            0x6 => {
+                if second > 0xF {
+                    return Err(format!("instruction contains invalid register {second}"));
+                }
+                return Ok(Instruction::SetRegister { register: second as usize, value: number });
+            }
+            0x7 => {
+                return Ok(Instruction::AddRegister { register: second as usize, value: number });
+            }
+            0xA => {
+                return Ok(Instruction::SetIndex(address));
+            }
+            0xD => {
+                return Ok(Instruction::Draw { x_register: second as usize, y_register: third as usize, count: fourth });
+            }
+            _ => {}
+        }
+        Err(format!("unknown instruction:{:#06x}", instruction))
+    }
+}
+
+impl std::fmt::Display for Instruction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Instruction::ClearScreen => write!(f, "clear screen"),
+            Instruction::Jump(address) => write!(f, "jump {address}"),
+            Instruction::SetRegister { register, value } => write!(f, "set register {register} {value}"),
+            Instruction::AddRegister { register, value } => write!(f, "add register {register} {value}"),
+            Instruction::SetIndex(address) => write!(f, "set index {address}"),
+            Instruction::Draw { x_register, y_register, count } => write!(f, "draw x: {x_register} y: {y_register} height: {count}"),
+        }
+    }
 }

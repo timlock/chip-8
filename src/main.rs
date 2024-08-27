@@ -6,8 +6,8 @@ use sdl2::rect::Rect;
 
 use chip8_emulator::{Chip8, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 
-const WIDTH: u32 = 800;
-const HEIGHT: u32 = 600;
+const WIDTH: u32 = DISPLAY_WIDTH as u32 * 10;
+const HEIGHT: u32 = DISPLAY_HEIGHT as u32 * 10;
 
 
 fn main() -> Result<(), String> {
@@ -25,7 +25,10 @@ fn main() -> Result<(), String> {
         .build()
         .map_err(|err| err.to_string())?;
 
-    let mut emulator = Chip8::new(30)?;
+    canvas.clear();
+    canvas.present();
+
+    let mut emulator = Chip8::new(50)?;
     let rom = fs::read("roms/IBM Logo.ch8").map_err(|err| err.to_string())?;
 
     emulator.load_program(&rom)?;
@@ -38,12 +41,8 @@ fn main() -> Result<(), String> {
                     break 'game;
                 }
                 Event::KeyDown {
-                    timestamp,
-                    window_id,
-                    keycode,
                     scancode,
-                    keymod,
-                    repeat
+                    ..
                 } => {
                     println!("Key down {:?}", event);
 
@@ -73,12 +72,8 @@ fn main() -> Result<(), String> {
                     emulator.on_input(key)
                 }
                 Event::KeyUp {
-                    timestamp,
-                    window_id,
-                    keycode,
                     scancode,
-                    keymod,
-                    repeat
+                    ..
                 } => {
                     println!("Key up {:?}", event);
                 }
@@ -96,9 +91,12 @@ fn main() -> Result<(), String> {
                     false => canvas.set_draw_color(Color::BLACK)
                 }
 
-                let y = (i / DISPLAY_HEIGHT) as i32;
+                let y = (i / DISPLAY_WIDTH) as i32;
                 let x = (i % DISPLAY_WIDTH) as i32;
-                let rect = Rect::new(x, y, 10, 10);
+                let rect = Rect::new(x * 10, y * 10, 10, 10);
+                if pixel {
+                    println!("Box x:{x} y:{y}");
+                }
                 canvas.fill_rect(rect)?;
             }
 
